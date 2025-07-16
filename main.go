@@ -15,13 +15,12 @@ type webSocketHandler struct {
 }
 
 func (wsh webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	c, err := wsh.upgrader.Upgrade(w, r, nil)
+	c, err := wsh.upgradeConn(w, r)
 	if err != nil {
-		log.Printf("error %s when upgrading connection to websocket", err)
 		return
 	}
 
-	defer func(){
+	defer func() {
 		log.Println("closing connection")
 		c.Close()
 	}()
@@ -72,36 +71,78 @@ func (wsh webSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (wsh webSocketHandler) NewRun(w http.ResponseWriter, r *http.Request) {
 	// Upgrade the HTTP connection to a WebSocket connection
-    conn, err := wsh.upgrader.Upgrade(w, r, nil)
-    if err != nil {
-       fmt.Println("Error upgrading:", err)
-       return
-    }
-    defer conn.Close()
-    // Listen for incoming messages
-    for {
-       // Read message from the client
-       _, message, err := conn.ReadMessage()
-       if err != nil {
-          fmt.Println("Error reading message:", err)
-          break
-       }
-       fmt.Printf("Received: %s\\n", message)
-       // Echo the message back to the client
-       if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
-          fmt.Println("Error writing message:", err)
-          break
-       }
-    }
+	conn, err := wsh.upgradeConn(w, r)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	// Listen for incoming messages
+	for {
+		// Read message from the client
+		_, message, err := conn.ReadMessage()
+		if err != nil {
+			fmt.Println("Error reading message:", err)
+			break
+		}
+		fmt.Printf("Received: %s\\n", message)
+		// Echo the message back to the client
+		if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
+			fmt.Println("Error writing message:", err)
+			break
+		}
+	}
+}
+
+func (wsh webSocketHandler) upgradeConn(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {
+	conn, err := wsh.upgrader.Upgrade(w, r, nil)
+
+	if err != nil {
+		log.Printf("Upgrade failed: %v", err)
+		return nil, err
+	}
+
+	return conn, nil
+}
+
+func (wsh webSocketHandler) LogMessageHandler(w http.ResponseWriter, r *http.Request) {
+	// membuat koneksi dengan websocket
+	conn, err := wsh.upgradeConn(w, r)
+
+	if err != nil {
+		return
+	}
+	// close in the end
+	defer conn.Close()
+
+	for {
+		_, message, err := conn.ReadMessage()
+		if err != nil {
+			fmt.Println("error when reading message: ", err)
+			break
+		}
+
+		log.Printf("Message: %s\n", message)
+		log.Printf("Time: %s, IP: %s", time.Now().Format(time.DateTime), r.RemoteAddr)
+
+		if err = conn.WriteMessage(websocket.TextMessage, message); err != nil {
+			fmt.Println("Error when writing message", err)
+			break
+		}
+	}
 }
 
 func main() {
 	websocketHandler := webSocketHandler{
-		upgrader: websocket.Upgrader{},
+		upgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				return true
+			},
+		},
 	}
 
 	http.Handle("/ws", websocketHandler)
 	http.HandleFunc("/ws/new", websocketHandler.NewRun)
+	http.HandleFunc("/ws/log", websocketHandler.LogMessageHandler)
 	log.Print("Starting server...")
 	log.Fatal(http.ListenAndServe("localhost:8080", nil))
 }
